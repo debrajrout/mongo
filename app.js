@@ -6,11 +6,12 @@ const path = require("path");
 const fs = require("fs");
 
 const app = express();
-const port = 3000;
+const port = 8000;
 
 // MongoDB Atlas connection string
 const MONGO_URI =
   "mongodb+srv://carecherryglitz:pDI2oEILpJuWLv92@cluster0.ist27oh.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+
 // Connect to MongoDB Atlas
 mongoose.connect(MONGO_URI, {
   useNewUrlParser: true,
@@ -23,9 +24,17 @@ db.once("open", () => {
   console.log("Connected to MongoDB");
 });
 
-// Define a Mongoose schema
+// Define Shop schema
 const dataSchema = new mongoose.Schema({}, { strict: false });
 const DataModel = mongoose.model("Shop", dataSchema);
+
+// Define City schema
+const CitySchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  latitude: { type: Number, required: true, default: 0 },
+  longitude: { type: Number, required: true, default: 0 },
+});
+const CityModel = mongoose.model("City", CitySchema);
 
 // Configure multer for file uploads
 const upload = multer({ dest: "uploads/" });
@@ -67,6 +76,52 @@ app.post("/upload", upload.single("file"), (req, res) => {
   } catch (err) {
     fs.unlinkSync(file.path); // Delete the file in case of error
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/generate-cities", async (req, res) => {
+  try {
+    // Count total number of shops
+    const totalShops = await DataModel.countDocuments();
+    console.log(`Total number of shops: ${totalShops}`);
+
+    // Get all unique city names from the Shop collection
+    const cities = await DataModel.distinct("City");
+
+    // Count how many new cities are added
+    let newCityCount = 0;
+
+    // Loop through each city and upsert (update or insert if not present)
+    const upsertPromises = cities.map(async (cityName) => {
+      if (cityName && typeof cityName === "string" && cityName.trim() !== "") {
+        const result = await CityModel.updateOne(
+          { name: cityName },
+          { name: cityName, latitude: 0, longitude: 0 },
+          { upsert: true }
+        );
+
+        // If a new city was inserted, increase the newCityCount
+        if (result.upsertedCount > 0) {
+          newCityCount++;
+        }
+      }
+    });
+
+    // Wait for all upsert operations to complete
+    await Promise.all(upsertPromises);
+
+    console.log(`Total unique cities found: ${cities.length}`);
+    console.log(`New cities added to the collection: ${newCityCount}`);
+
+    res.status(200).json({
+      message: "City collection updated successfully",
+      totalShops,
+      uniqueCitiesFound: cities.length,
+      newCitiesAdded: newCityCount,
+    });
+  } catch (err) {
+    console.error("Error generating cities:", err);
+    res.status(500).json({ error: "An error occurred while generating cities" });
   }
 });
 
